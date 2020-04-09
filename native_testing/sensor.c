@@ -1,5 +1,7 @@
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
+#include <unistd.h>
 #include <signal.h>
 
 #include <sys/time.h>
@@ -26,20 +28,40 @@ typedef struct{
 static void timer_thread(union sigval sigval);
 static bool setup_timer(int clock_id, timer_t timerid, unsigned int timer_period, struct timespec *start_time);
 static inline void timespec_add(struct timespec *result, const struct timespec *ts_1, const struct timespec *ts_2);
+static void daemonize(void);
+void sig_handler(int signo);
 
 timer_t timerid;
 thread_data_t td;
+bool sig_handler_exit = false;
 
 int main(void){
+
+	struct sigaction sa;
 
 	struct timespec start_time;
 	struct sigevent sev;
 	memset(&td, 0, sizeof(thread_data_t));
 
 	if(pthread_mutex_init(&td.lock, NULL) != 0){
-        syslog(LOG_ERR, "aesdsocket: %d, %s failed initializing thread mutex", errno, strerror(errno));
+        syslog(LOG_ERR, "sensor: %d, %s failed initializing thread mutex", errno, strerror(errno));
     }
-	/* code */
+
+	// set up signal handler for interrupts and termination
+	sa.sa_handler = sig_handler;
+	sa.sa_flags = SA_RESTART;
+	if(sigaction(SIGINT, &sa, NULL) == -1){
+		syslog(LOG_ERR, "sensor: failed to set up sigaction SIGINT, errno: %s", strerror(errno));
+		exit(1);
+	}
+	if(sigaction(SIGTERM, &sa, NULL) == -1){
+		syslog(LOG_ERR, "sensor: failed to set up sigaction SIGTERM, errno: %s", strerror(errno));
+		exit(1);
+	}
+
+	// daemonize
+    daemonize();
+
     int clock_id = CLOCK_MONOTONIC;
     memset(&sev, 0, sizeof(struct sigevent));
     // Setup a call to timer_thread passing in the td structure as the sigev_value argument
@@ -47,16 +69,20 @@ int main(void){
     sev.sigev_value.sival_ptr = &td;
     sev.sigev_notify_function = timer_thread;
     if(timer_create(clock_id, &sev, &timerid) != 0 ){
-        syslog(LOG_ERR, "aesdsocket: %d, %s failed to create timer", errno, strerror(errno));
+        syslog(LOG_ERR, "sensor: %d, %s failed to create timer", errno, strerror(errno));
     }
 
 	setup_timer(clock_id, timerid, 5, &start_time);
 	int i = 0;
 	while(1){
+		if(sig_handler_exit){
+			closelog();
+			exit(0);
+		}
 		i++;
-		printf("%d\n", i);//
+		// printf("%d\n", i);
 		for(int j = 0; j < 100000000; j++){
-			;//
+			;
 		}
 	}
 	return 0;
@@ -70,47 +96,22 @@ int main(void){
 */
 static void timer_thread(union sigval sigval){
     thread_data_t *td = (thread_data_t*) sigval.sival_ptr;
-    int ret = 0;
-	// char outstr[50];
-	// time_t t;
-	// struct tm *tmp;
-	// t = time(NULL);
-	// tmp = localtime(&t);
-
-	// fptr = fopen(datfile, "a+");
-	// if(fptr == NULL){
-	// 	syslog(LOG_ERR, "fopen failed to open file, errno: %s", strerror(errno));
-	// }
+    // int ret = 0;
 
     if(pthread_mutex_lock(&td->lock) != 0){
         printf("Error %d (%s) locking thread data!\n",errno,strerror(errno));
     } else {
-		// if(strftime(outstr, sizeof(outstr), rfc_2822, tmp) == 0){
-		// 	syslog(LOG_ERR, "aesdsocket: failed to get time, errno: %d", errno);
-		// }
-		// printf("timestamp:%s\n", outstr);
-		// ret = printf("timestamp:%s\n", outstr);
-		// if(ret < 0){
-		// 	syslog(LOG_ERR, "sensor: failed to write time, errno: %d", errno);
-		// 	printf("could not print timestamp to file\n");
-		// }
 
-		ret = system("./gettemp.sh");
-		if(ret != 0){
-			syslog(LOG_ERR, "sensor: failed to get sensor temp value, errno: %d", errno);
-			perror("system(getsensor.sh)");
-		}
+		system("/var/tmp/gettemp.sh");
+		// if(ret != 0){
+		// 	syslog(LOG_ERR, "sensor: failed to get sensor temp value, errno: %d", errno);
+		// 	perror("system(getsensor.sh)");
+		// }
 
         if(pthread_mutex_unlock(&td->lock) != 0){
             printf("Error %d (%s) unlocking thread data!\n", errno, strerror(errno));
         }
     }
-
-	// // close file and print error to syslog if it fails
-	// if(fclose(fptr) != 0){
-	// 	syslog(LOG_ERR, "fclose failed to close file, errno: %s", strerror(errno));
-	// }
-
 }
 
 
@@ -152,4 +153,48 @@ static inline void timespec_add( struct timespec *result, const struct timespec 
         result->tv_nsec -= 1000000000L;
         result->tv_sec ++;
     }
+}
+
+
+// daemonize program
+static void daemonize(void){
+	pid_t pid;
+	// fork and exit parent if success
+	pid = fork();
+	if(pid < 0){
+		// Fork failed
+		exit(1);
+	}
+	if (pid > 0){
+		// Fork success
+		exit(0);
+	}
+	// create new session id for child
+	if(setsid() < 0){
+		exit(1);
+	}
+	// catch and ignore HUP and CHLD signals
+	signal(SIGCHLD, SIG_IGN);
+	signal(SIGHUP, SIG_IGN);
+	// change filemode mask
+	umask(0);
+	openlog("sensor-daemon", LOG_PID, LOG_DAEMON);
+	// change working dir to "/"
+	if((chdir("/")) < 0){
+		exit(1);
+	}
+	syslog(LOG_NOTICE, "sensor daemonized");
+}
+
+
+// signal handler to catch signals, shutdwn socket 
+void sig_handler(int signo){
+	int saved_errno = errno;
+	if(signo == SIGINT || signo == SIGTERM){
+		syslog(LOG_DEBUG, "Caught signal, exiting\n");
+		pthread_mutex_lock(&td.lock);
+		sig_handler_exit = true;
+		pthread_mutex_unlock(&td.lock);
+	}
+	errno = saved_errno;
 }
