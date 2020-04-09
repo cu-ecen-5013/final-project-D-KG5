@@ -10,6 +10,8 @@ Team Members: Dhruva Koley, Chutao Wei, Sam Solondz
 
 [Project Schedule](https://github.com/cu-ecen-5013/final-project-chwe3468/wiki/Schedule)
 
-[Sam Repo](https://github.com/cu-ecen-5013/final-project-SamSolondz)
+[RPi2 B Repository (Sam)](https://github.com/cu-ecen-5013/final-project-SamSolondz)
 
-[Chutao Repo](https://github.com/cu-ecen-5013/final-project-chwe3468)
+[RPi4 Repository (Chutao)](https://github.com/cu-ecen-5013/final-project-chwe3468)
+
+[Shared App code Repository](https://github.com/chwe3468/cu-ecen-5013-final-project-shared)
