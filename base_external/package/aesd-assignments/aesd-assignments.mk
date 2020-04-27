@@ -5,7 +5,6 @@
 #
 ##############################################################
 
-#TODO: Fill up the contents below in order to reference your assignment 3 git contents
 AESD_ASSIGNMENTS_VERSION = '195b5543d77d072db83237170e82d1b6f8fa1135'
 AESD_ASSIGNMENTS_SITE = 'git@github.com:chwe3468/cu-ecen-5013-final-project-shared.git'
 AESD_ASSIGNMENTS_SITE_METHOD = git
